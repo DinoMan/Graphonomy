@@ -1,4 +1,7 @@
+This is a fork of https://github.com/Gaoyiminggithub/Graphonomy with some additional useful scripts added.
+
 # Graphonomy: Universal Human Parsing via Graph Transfer Learning
+
 
 This repository contains the code for the paper:
 
@@ -47,16 +50,17 @@ Download [cihp_flipped](https://drive.google.com/file/d/1aaJyQH-hlZEAsA7iH-mYeK1
 Download [atr_flip](https://drive.google.com/file/d/1iR8Tn69IbDSM7gq_GG-_s11HCnhPkyG3/view?usp=sharing), unzip and store in `data/datasets/ATR/`.
 
 ### Inference
-We provide a simply script to get the visualization result on the CIHP dataset using [trained](https://drive.google.com/file/d/1O9YD4kHgs3w2DUcWxtHiEFyWjCBeS_Vc/view?usp=sharing)
- models as follows :
+We provide a simply script to get the visualization result for the folder containing images.
+Images with extensions .jpg, .jpeg, .png, .JPG, .JPEG, .PNG are accepted.
 ```shell
 # Example of inference
-python exp/inference/inference.py  \
+python exp/inference/inference_folder.py  \
 --loadmodel /path_to_inference_model \
---img_path ./img/messi.jpg \
---output_path ./img/ \
---output_name /output_file_name
+--img_dir ./img/samples \
+--output_dir ./img/samples_segm
 ``` 
+
+It is recommended to download current Universal model (preferably) from [here](https://drive.google.com/file/d/1sWJ54lCBFnzCNz5RTCGQmkVovkY9x8_D/view) or a model trained on CIHP from [here](https://drive.google.com/file/d/1eUe18HoH05p0yFUd_sN6GXdTj82aW0m9/view?usp=sharing).
 
 ### Training
 #### Transfer learning
@@ -74,29 +78,6 @@ python exp/inference/inference.py  \
 If you want to evaluate the performance of a pre-trained model on PASCAL-Person-Part or CIHP val/test set, 
 simply run the script: `sh eval_cihp/pascal.sh`.
 Specify the specific model. And we provide the final model that you can download and store it in /data/pretrained_model/.
-
-### Models
-**Pascal-Person-Part trained model**
-
-|Model|Google Cloud|Baidu Yun|
-|--------|--------------|-----------|
-|Graphonomy(CIHP)| [Download](https://drive.google.com/file/d/1cwEhlYEzC7jIShENNLnbmcBR0SNlZDE6/view?usp=sharing)| Available soon|
-
-**CIHP trained model**
-
-|Model|Google Cloud|Baidu Yun|
-|--------|--------------|-----------|
-|Graphonomy(PASCAL)| [Download](https://drive.google.com/file/d/1O9YD4kHgs3w2DUcWxtHiEFyWjCBeS_Vc/view?usp=sharing)| Available soon|
-
-**Universal trained model**
-
-|Model|Google Cloud|Baidu Yun|
-|--------|--------------|-----------|
-|Universal| [Download](https://drive.google.com/file/d/1sWJ54lCBFnzCNz5RTCGQmkVovkY9x8_D/view?usp=sharing)|Available soon|
-
-### Todo:
-- [ ] release pretrained and trained models
-- [ ] update universal eval code&script
 
 # Citation
 
