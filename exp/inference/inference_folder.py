@@ -1,5 +1,6 @@
 import socket
 import timeit
+from pathlib import Path
 from glob import glob
 import numpy as np
 from PIL import Image
@@ -88,7 +89,7 @@ def img_transform(img, transform=None):
     sample = transform(sample)
     return sample
 
-def inference(net, img_paths=None, output_path='./', use_gpu=True):
+def inference(net, img_paths=None, output_path='./', scale_list=(1, 0.5, 0.75, 1.25, 1.5, 1.75), use_gpu=True):
     '''
 
     :param net:
@@ -96,6 +97,7 @@ def inference(net, img_paths=None, output_path='./', use_gpu=True):
     :param output_path:
     :return:
     '''
+
     if img_paths is None:
         img_paths = []
 
@@ -115,8 +117,6 @@ def inference(net, img_paths=None, output_path='./', use_gpu=True):
 
     exec_times = []
     for img_name in tqdm(img_paths):
-        # multi-scale
-        scale_list = [1, 0.5, 0.75, 1.25, 1.5, 1.75]
         img = read_img(img_name)
         testloader_list = []
         testloader_flip_list = []
@@ -170,14 +170,20 @@ def inference(net, img_paths=None, output_path='./', use_gpu=True):
         results = predictions.cpu().numpy()
         vis_res = decode_labels(results)
 
+        end_time = timeit.default_timer()
+        exec_times.append(end_time - start_time)
+
         parsing_im = Image.fromarray(vis_res[0])
         output_name = os.path.basename(img_name)
         output_name = os.path.splitext(output_name)[0]
-        parsing_im.save(output_path + '/{}.png'.format(output_name))
-        cv2.imwrite(output_path + '/{}_gray.png'.format(output_name), results[0, :, :])
+        # saving grayscale mask image
+        cv2.imwrite(str(Path(output_path) / 'mask_gray' / '{}.png'.format(output_name)), results[0, :, :])
+        # saving colored mask image
+        parsing_im.save(str(Path(output_path) / 'mask_color' / '{}.png'.format(output_name)))
+        # saving segmented image with masked pixels drawn black
+        segmented_img = np.asarray(img)[..., ::-1] * (results[0, :, :] > 0).astype(np.float)[..., np.newaxis]
+        cv2.imwrite(str(Path(output_path) / 'segmented' / '{}.png'.format(output_name)), segmented_img)
 
-        end_time = timeit.default_timer()
-        exec_times.append(end_time - start_time)
         # print('time used for the multi-scale image inference' + ' is :' + str(end_time - start_time))
     print('Average inference time:', np.mean(exec_times))
 
@@ -189,6 +195,7 @@ if __name__ == '__main__':
     parser.add_argument('--loadmodel', default='', type=str)
     parser.add_argument('--img_dir', default='', type=str)
     parser.add_argument('--output_dir', default='', type=str)
+    parser.add_argument('--tta', default='1,0.75,0.5,1.25,1.5,1.75', type=str)
     parser.add_argument('--use_gpu', default=1, type=int)
     opts = parser.parse_args()
 
@@ -219,6 +226,18 @@ if __name__ == '__main__':
     img_paths = list(sorted(img_paths))
     if not os.path.exists(opts.output_dir):
         os.makedirs(opts.output_dir)
+    if not os.path.exists(str(Path(opts.output_dir) / 'mask_color')):
+        os.makedirs(str(Path(opts.output_dir) / 'mask_color'))
+    if not os.path.exists(str(Path(opts.output_dir) / 'mask_gray')):
+        os.makedirs(str(Path(opts.output_dir) / 'mask_gray'))
+    if not os.path.exists(str(Path(opts.output_dir) / 'segmented')):
+        os.makedirs(str(Path(opts.output_dir) / 'segmented'))
+    tta = opts.tta
+    try:
+        tta = tta.split(',')
+        tta = list(map(float, tta))
+    except:
+        raise Exception(f'tta must be a sequence of comma-separated float values such as "1.0,0.5,1.5". Got "{opts.tta}".')
 
-    inference(net=net, img_paths=img_paths, output_path=opts.output_dir, use_gpu=use_gpu)
+    inference(net=net, img_paths=img_paths, output_path=opts.output_dir, use_gpu=use_gpu, scale_list=tta)
 
