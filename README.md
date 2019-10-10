@@ -57,8 +57,11 @@ Images with extensions .jpg, .jpeg, .png, .JPG, .JPEG, .PNG are accepted.
 python exp/inference/inference_folder.py  \
 --loadmodel /path_to_inference_model \
 --img_dir ./img/samples \
+--tta 1.0,0.75,0.5,1.25 \
 --output_dir ./img/samples_segm
 ``` 
+
+While `--tta` argument (test-time augmentation, TTA) is not mandatory to be specified (default value: 1.0,0.75,0.5,1.25,1.5,1.75), one can use it to enhance quality of results and autoresize images before passing them to the predicting network. For high-resolution images, such as FullHD, super-resolution TTA can cause occupied GPU memory to increase rapidly.
 
 It is recommended to download current Universal model (preferably) from [here](https://drive.google.com/file/d/1sWJ54lCBFnzCNz5RTCGQmkVovkY9x8_D/view) or a model trained on CIHP from [here](https://drive.google.com/file/d/1eUe18HoH05p0yFUd_sN6GXdTj82aW0m9/view?usp=sharing).
 
