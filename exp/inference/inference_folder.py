@@ -1,28 +1,30 @@
-import socket
+# Standard libraries
 import timeit
 from pathlib import Path
 from glob import glob
-import numpy as np
-from PIL import Image
 from datetime import datetime
 import os
 import sys
 from collections import OrderedDict
+import argparse
+from typing import List
 sys.path.append('./')
-# PyTorch includes
+
+# PyTorch
 import torch
 from torch.autograd import Variable
+import torch.nn.functional as F
 from torchvision import transforms
+
+# Other third-party libraries
+import numpy as np
+from PIL import Image
 import cv2
 from tqdm import tqdm
 
-# Custom includes
+# Custom imports
 from networks import deeplab_xception_transfer, graph
 from dataloaders import custom_transforms as tr
-
-#
-import argparse
-import torch.nn.functional as F
 
 label_colours = [(0,0,0)
                 , (128,0,0), (255,0,0), (0,85,0), (170,0,51), (255,85,0), (0,0,85), (0,119,221), (85,85,0), (0,85,85), (85,51,0), (52,86,128), (0,128,0)
@@ -89,17 +91,9 @@ def img_transform(img, transform=None):
     sample = transform(sample)
     return sample
 
-def inference(net, img_paths=None, output_path='./', scale_list=(1, 0.5, 0.75, 1.25, 1.5, 1.75), use_gpu=True):
-    '''
-
-    :param net:
-    :param img_path:
-    :param output_path:
-    :return:
-    '''
-
-    if img_paths is None:
-        img_paths = []
+def inference(net, img_paths, output_path, scale_list=(1, 0.5, 0.75, 1.25, 1.5, 1.75), use_gpu=True):
+    # Compute the longest common prefix to determine output paths
+    common_prefix = os.path.commonpath(img_paths)
 
     # adj
     adj2_ = torch.from_numpy(graph.cihp2pascal_nlp_adj).float()
@@ -153,7 +147,7 @@ def inference(net, img_paths=None, output_path='./', scale_list=(1, 0.5, 0.75, 1
             inputs = Variable(inputs, requires_grad=False)
 
             with torch.no_grad():
-                if use_gpu >= 0:
+                if use_gpu:
                     inputs = inputs.cuda()
                 # outputs = net.forward(inputs)
                 outputs = net.forward(inputs, adj1_test.cuda(), adj3_test.cuda(), adj2_test.cuda())
@@ -165,7 +159,8 @@ def inference(net, img_paths=None, output_path='./', scale_list=(1, 0.5, 0.75, 1
                     outputs_final = outputs_final + outputs
                 else:
                     outputs_final = outputs.clone()
-        ################ plot pic
+
+        # outputs_final: `B x 20 x H x W`
         predictions = torch.max(outputs_final, 1)[1]
         results = predictions.cpu().numpy()
         vis_res = decode_labels(results)
@@ -174,15 +169,20 @@ def inference(net, img_paths=None, output_path='./', scale_list=(1, 0.5, 0.75, 1
         exec_times.append(end_time - start_time)
 
         parsing_im = Image.fromarray(vis_res[0])
-        output_name = os.path.basename(img_name)
-        output_name = os.path.splitext(output_name)[0]
+        
+        # Actually write the outputs to disk
+        img_name = img_name.relative_to(common_prefix)
+
+        for output_folder in 'mask_gray', 'mask_color', 'segmented':
+            (output_path / output_folder / img_name.parent).mkdir(parents=True, exist_ok=True)
+
         # saving grayscale mask image
-        cv2.imwrite(str(Path(output_path) / 'mask_gray' / '{}.png'.format(output_name)), results[0, :, :])
+        cv2.imwrite(str(output_path / 'mask_gray' / img_name.with_suffix('.png')), results[0, :, :])
         # saving colored mask image
-        parsing_im.save(str(Path(output_path) / 'mask_color' / '{}.png'.format(output_name)))
+        parsing_im.save(str(output_path / 'mask_color' / img_name.with_suffix('.png')))
         # saving segmented image with masked pixels drawn black
         segmented_img = np.asarray(img)[..., ::-1] * (results[0, :, :] > 0).astype(np.float)[..., np.newaxis]
-        cv2.imwrite(str(Path(output_path) / 'segmented' / '{}.png'.format(output_name)), segmented_img)
+        cv2.imwrite(str(output_path / 'segmented' / img_name.with_suffix('.png')), segmented_img)
 
         # print('time used for the multi-scale image inference' + ' is :' + str(end_time - start_time))
     print('Average inference time:', np.mean(exec_times))
@@ -191,53 +191,49 @@ def inference(net, img_paths=None, output_path='./', scale_list=(1, 0.5, 0.75, 1
 if __name__ == '__main__':
     '''argparse begin'''
     parser = argparse.ArgumentParser()
-    # parser.add_argument('--loadmodel',default=None,type=str)
-    parser.add_argument('--loadmodel', default='', type=str)
-    parser.add_argument('--img_dir', default='', type=str)
-    parser.add_argument('--output_dir', default='', type=str)
-    parser.add_argument('--tta', default='1,0.75,0.5,1.25,1.5,1.75', type=str)
-    parser.add_argument('--use_gpu', default=1, type=int)
+    parser.add_argument('--model_path', required=True, type=Path,
+        help="Where the model weights are.")
+    parser.add_argument('--images_path', required=True, type=Path,
+        help="Where to look for images. Can be a file with a list of paths, or a directory (will be searched recursively for png/jpg/jpeg files).")
+    parser.add_argument('--output_dir', required=True, type=Path,
+        help="Where to save the results.")
+    parser.add_argument('--tta', default='1,0.75,0.5,1.25,1.5,1.75', type=str,
+        help="A list of scales for test-time augmentation.")
     opts = parser.parse_args()
 
     net = deeplab_xception_transfer.deeplab_xception_transfer_projection_savemem(n_classes=20,
                                                                                  hidden_layers=128,
                                                                                  source_classes=7, )
-    if not opts.loadmodel == '':
-        x = torch.load(opts.loadmodel)
-        net.load_source_model(x)
-        print('load model:', opts.loadmodel)
-    else:
-        print('no model load !!!!!!!!')
-        raise RuntimeError('No model!!!!')
 
-    if opts.use_gpu >0 :
-        net.cuda()
-        use_gpu = True
-    else:
-        use_gpu = False
-        raise RuntimeError('must use the gpu!!!!')
+    net.load_source_model(torch.load(opts.model_path))
+    net.cuda()
 
-    img_paths = (glob(os.path.join(opts.img_dir, '*.jpg')) + 
-        glob(os.path.join(opts.img_dir, '*.png')) +
-        glob(os.path.join(opts.img_dir, '*.JPG')) +
-        glob(os.path.join(opts.img_dir, '*.PNG')) + 
-        glob(os.path.join(opts.img_dir, '*.jpeg')) + 
-        glob(os.path.join(opts.img_dir, '*.JPEG')))
-    img_paths = list(sorted(img_paths))
-    if not os.path.exists(opts.output_dir):
-        os.makedirs(opts.output_dir)
-    if not os.path.exists(str(Path(opts.output_dir) / 'mask_color')):
-        os.makedirs(str(Path(opts.output_dir) / 'mask_color'))
-    if not os.path.exists(str(Path(opts.output_dir) / 'mask_gray')):
-        os.makedirs(str(Path(opts.output_dir) / 'mask_gray'))
-    if not os.path.exists(str(Path(opts.output_dir) / 'segmented')):
-        os.makedirs(str(Path(opts.output_dir) / 'segmented'))
+    image_paths_list: List[Path]
+    
+    if opts.images_path.is_file():
+        print(f"`--images_path` is a file, reading it for a list of files...")
+        with open(opts.images_path, 'r') as f:
+            image_paths_list = sorted(Path(line.strip()) for line in f)
+    elif opts.images_path.is_dir():
+        print(f"`--images_path` is a directory, recursively looking for images in it...")
+        image_paths_list = sorted(
+            x for x in opts.images_path.rglob("*") \
+            if x.is_file() and x.suffix.lower() in ('.png', '.jpg', '.jpeg')
+        )
+    else:
+        raise FileNotFoundError(f"`--images_path` ('{opts.images_path}')")
+
+    print(f"Found {len(image_paths_list)} images")
+    
+    (opts.output_dir / 'mask_color').mkdir(parents=True, exist_ok=True)
+    (opts.output_dir / 'mask_gray').mkdir(parents=True, exist_ok=True)
+    (opts.output_dir / 'segmented').mkdir(parents=True, exist_ok=True)
+
     tta = opts.tta
     try:
         tta = tta.split(',')
         tta = list(map(float, tta))
     except:
-        raise Exception(f'tta must be a sequence of comma-separated float values such as "1.0,0.5,1.5". Got "{opts.tta}".')
+        raise ValueError(f'tta must be a sequence of comma-separated float values such as "1.0,0.5,1.5". Got "{opts.tta}".')
 
-    inference(net=net, img_paths=img_paths, output_path=opts.output_dir, use_gpu=use_gpu, scale_list=tta)
-
+    inference(net, image_paths_list,  opts.output_dir, use_gpu=True, scale_list=tta)
