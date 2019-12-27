@@ -194,9 +194,10 @@ if __name__ == '__main__':
     parser.add_argument('--model_path', required=True, type=Path,
         help="Where the model weights are.")
     parser.add_argument('--images_path', required=True, type=Path,
-        help="Where to look for images. Can be a file with a list of paths, or a directory (will be searched recursively for png/jpg/jpeg files).")
+        help="Where to look for images. Can be a file with a list of paths, or a " \
+             "directory (will be searched recursively for png/jpg/jpeg files).")
     parser.add_argument('--output_dir', required=True, type=Path,
-        help="Where to save the results.")
+        help="A directory where to save the results. Will be created if doesn't exist.")
     parser.add_argument('--tta', default='1,0.75,0.5,1.25,1.5,1.75', type=str,
         help="A list of scales for test-time augmentation.")
     opts = parser.parse_args()

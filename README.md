@@ -2,38 +2,43 @@ This is a fork of https://github.com/Gaoyiminggithub/Graphonomy with some additi
 
 # Graphonomy: Universal Human Parsing via Graph Transfer Learning
 
-
 This repository contains the code for the paper:
 
 [**Graphonomy: Universal Human Parsing via Graph Transfer Learning**](https://arxiv.org/abs/1904.04536)
 ,Ke Gong, Yiming Gao, Xiaodan Liang, Xiaohui Shen, Meng Wang, Liang Lin.
 
 # Environment and installation
-+ Pytorch = 0.4.0
-+ torchvision
-+ scipy
-+ tensorboardX
-+ numpy
-+ opencv-python
-+ matplotlib
-+ networkx
 
-   you can install above package by using `pip install -r requirements.txt`
-
+`pip install -r requirements.txt`
 
 ### Inference
 
 It is recommended to **download current Universal model (preferably) from [here](https://drive.google.com/file/d/1sWJ54lCBFnzCNz5RTCGQmkVovkY9x8_D/view)** or a model trained on CIHP from [here](https://drive.google.com/file/d/1eUe18HoH05p0yFUd_sN6GXdTj82aW0m9/view?usp=sharing).
 
-We provide a simple script to get the visualization result for the folder containing images.
-Images with extensions .jpg, .jpeg, .png, .JPG, .JPEG, .PNG are accepted.
+Try `python exp/inference/inference_folder.py --help`:
+
+```
+  --model_path MODEL_PATH
+                        Where the model weights are.
+  --images_path IMAGES_PATH
+                        Where to look for images. Can be a file with a list of paths, or a
+                        directory (will be searched recursively for png/jpg/jpeg files).
+  --output_dir OUTPUT_DIR
+                        A directory where to save the results. Will be created if doesn't exist.
+                        The output directory structure will follow the one in `IMAGES_PATH`.
+  --tta TTA             
+                        A list of scales for test-time augmentation.
+                        Default: "1,0.75,0.5,1.25,1.5,1.75"
+```
+
+Example:
+
 ```shell
-# Example of inference
 python exp/inference/inference_folder.py  \
---loadmodel /path_to_inference_model \
---img_dir ./img/samples \
+--model_path data/model/universal_trained.pth \
+--images_path example_images \
+--output_dir example_outputs
 --tta 1.0,0.75,0.5,1.25 \
---output_dir ./img/samples_segm
 ``` 
 
 While `--tta` argument (test-time augmentation, TTA) is not mandatory to be specified (default value: 1.0,0.75,0.5,1.25,1.5,1.75), one can use it to enhance quality of results and autoresize images before passing them to the predicting network. For high-resolution images, such as FullHD, super-resolution TTA can cause occupied GPU memory to increase rapidly.
