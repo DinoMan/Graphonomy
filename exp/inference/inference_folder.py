@@ -91,7 +91,14 @@ def img_transform(img, transform=None):
     sample = transform(sample)
     return sample
 
-def inference(net, img_paths, output_path, scale_list=(1, 0.5, 0.75, 1.25, 1.5, 1.75), use_gpu=True):
+def inference(net, img_paths, output_path, scale_list=[1.0, 0.5, 0.75, 1.25, 1.5, 1.75], use_gpu=True):
+    # 1.0 should always go first
+    try:
+        scale_list.remove(1.0)
+    except ValueError:
+        pass
+    scale_list.insert(0, 1.0)
+
     # Compute the longest common prefix to determine output paths
     common_prefix = os.path.commonpath(img_paths)
 
