@@ -25,10 +25,14 @@ Try `python exp/inference/inference_folder.py --help`:
                         directory (will be searched recursively for png/jpg/jpeg files).
   --output_dir OUTPUT_DIR
                         A directory where to save the results. Will be created if doesn't exist.
-                        The output directory structure will follow the one in `IMAGES_PATH`.
+                        The output directory structure will follow the one in `IMAGES_PATH`,
+                        all subfolders will be created.
   --tta TTA             
                         A list of scales for test-time augmentation.
                         Default: "1,0.75,0.5,1.25,1.5,1.75"
+  --save_extra_data
+                        Save parts' segmentation masks, colored segmentation masks and images with removed background.
+                        If not specified, only foreground probability masks will be saved.
 ```
 
 Example:
@@ -38,7 +42,7 @@ python exp/inference/inference_folder.py  \
 --model_path data/model/universal_trained.pth \
 --images_path example_images \
 --output_dir example_outputs
---tta 1.0,0.75,0.5,1.25 \
+--tta 1.0,0.75,0.5,1.25
 ``` 
 
 While `--tta` argument (test-time augmentation, TTA) is not mandatory to be specified (default value: 1.0,0.75,0.5,1.25,1.5,1.75), one can use it to enhance quality of results and autoresize images before passing them to the predicting network. For high-resolution images, such as FullHD, super-resolution TTA can cause occupied GPU memory to increase rapidly.

@@ -14,7 +14,9 @@ sys.path.append('./')
 import torch
 from torch.autograd import Variable
 import torch.nn.functional as F
+import torch.utils.data
 from torchvision import transforms
+torch.set_grad_enabled(False)
 
 # Other third-party libraries
 import numpy as np
@@ -85,13 +87,13 @@ def read_img(img_path):
     _img = Image.open(img_path).convert('RGB')  # return is RGB pic
     return _img
 
-def img_transform(img, transform=None):
+def img_transform(img, transform):
     sample = {'image': img, 'label': 0}
 
     sample = transform(sample)
-    return sample
+    return sample['image']
 
-def inference(net, img_paths, output_path, scale_list=[1.0, 0.5, 0.75, 1.25, 1.5, 1.75], use_gpu=True):
+def inference(net, img_paths, output_path, scale_list=[1.0, 0.5, 0.75, 1.25, 1.5, 1.75], use_gpu=True, save_extra_data=False):
     # 1.0 should always go first
     try:
         scale_list.remove(1.0)
@@ -116,82 +118,90 @@ def inference(net, img_paths, output_path, scale_list=[1.0, 0.5, 0.75, 1.25, 1.5
     # One testing epoch
     net.eval()
 
+    class InferenceDataset(torch.utils.data.Dataset):
+        def __init__(self, img_paths, scale_list):
+            self.img_paths = img_paths
+            self.scale_list = scale_list
+
+        def __len__(self):
+            return len(self.img_paths)
+
+        def __getitem__(self, idx):
+            image_path = self.img_paths[idx]
+            img = read_img(image_path)
+            img_flipped = img_transform(img, tr.HorizontalFlip_only_img())
+
+            retval, retval_flipped = [], []
+            for scale in self.scale_list:
+                transform = transforms.Compose([
+                    tr.Scale_only_img(scale),
+                    tr.Normalize_xception_tf_only_img(),
+                    tr.ToTensor_only_img()])
+
+                retval.append(img_transform(img, transform))
+                retval_flipped.append(img_transform(img_flipped, transform))
+
+            return retval, retval_flipped, str(image_path) # because `default_collate` doesn't like `Path`
+
+    dataset = InferenceDataset(img_paths, scale_list)
+    dataloader = torch.utils.data.DataLoader(dataset, num_workers=1)
+
     exec_times = []
-    for img_name in tqdm(img_paths):
-        img = read_img(img_name)
-        testloader_list = []
-        testloader_flip_list = []
-        for pv in scale_list:
-            composed_transforms_ts = transforms.Compose([
-                tr.Scale_only_img(pv),
-                tr.Normalize_xception_tf_only_img(),
-                tr.ToTensor_only_img()])
+    for images, images_flipped, image_path in tqdm(dataloader):
+        image_path = Path(image_path[0])
 
-            composed_transforms_ts_flip = transforms.Compose([
-                tr.Scale_only_img(pv),
-                tr.HorizontalFlip_only_img(),
-                tr.Normalize_xception_tf_only_img(),
-                tr.ToTensor_only_img()])
-
-            testloader_list.append(img_transform(img, composed_transforms_ts))
-            # print(img_transform(img, composed_transforms_ts))
-            testloader_flip_list.append(img_transform(img, composed_transforms_ts_flip))
-        # print(testloader_list)
         start_time = timeit.default_timer()
-        # 1 0.5 0.75 1.25 1.5 1.75 ; flip:
 
-        for iii, sample_batched in enumerate(zip(testloader_list, testloader_flip_list)):
-            inputs, labels = sample_batched[0]['image'], sample_batched[0]['label']
-            inputs_f, _ = sample_batched[1]['image'], sample_batched[1]['label']
-            inputs = inputs.unsqueeze(0)
-            inputs_f = inputs_f.unsqueeze(0)
-            inputs = torch.cat((inputs, inputs_f), dim=0)
+        for iii, (image, image_flipped) in enumerate(zip(images, images_flipped)):
+            inputs = torch.cat((image, image_flipped))
             if iii == 0:
-                _, _, h, w = inputs.size()
-            # assert inputs.size() == inputs_f.size()
+                _, _, h, w = inputs.shape
 
-            # Forward pass of the mini-batch
-            inputs = Variable(inputs, requires_grad=False)
+            if use_gpu:
+                inputs = inputs.cuda()
 
-            with torch.no_grad():
-                if use_gpu:
-                    inputs = inputs.cuda()
-                # outputs = net.forward(inputs)
-                outputs = net.forward(inputs, adj1_test.cuda(), adj3_test.cuda(), adj2_test.cuda())
-                outputs = (outputs[0] + flip(flip_cihp(outputs[1]), dim=-1)) / 2
-                outputs = outputs.unsqueeze(0)
+            outputs = net.forward(inputs, adj1_test.cuda(), adj3_test.cuda(), adj2_test.cuda())
+            outputs = (outputs[0] + flip(flip_cihp(outputs[1]), dim=-1)) / 2
+            outputs = outputs.unsqueeze(0)
 
-                if iii > 0:
-                    outputs = F.upsample(outputs, size=(h, w), mode='bilinear', align_corners=True)
-                    outputs_final = outputs_final + outputs
-                else:
-                    outputs_final = outputs.clone()
+            if iii > 0:
+                outputs = F.upsample(outputs, size=(h, w), mode='bilinear', align_corners=True)
+                outputs_final = outputs_final + outputs
+            else:
+                outputs_final = outputs
 
         # outputs_final: `B x 20 x H x W`
-        predictions = torch.max(outputs_final, 1)[1]
-        results = predictions.cpu().numpy()
-        vis_res = decode_labels(results)
-
         end_time = timeit.default_timer()
         exec_times.append(end_time - start_time)
 
-        parsing_im = Image.fromarray(vis_res[0])
-        
         # Actually write the outputs to disk
-        img_name = img_name.relative_to(common_prefix)
+        image_path = image_path.relative_to(common_prefix)
 
-        for output_folder in 'mask_gray', 'mask_color', 'segmented':
-            (output_path / output_folder / img_name.parent).mkdir(parents=True, exist_ok=True)
+        if save_extra_data:
+            predictions = torch.max(outputs_final, 1)[1]
+            results = predictions.cpu().numpy()
 
-        # saving grayscale mask image
-        cv2.imwrite(str(output_path / 'mask_gray' / img_name.with_suffix('.png')), results[0, :, :])
-        # saving colored mask image
-        parsing_im.save(str(output_path / 'mask_color' / img_name.with_suffix('.png')))
-        # saving segmented image with masked pixels drawn black
-        segmented_img = np.asarray(img)[..., ::-1] * (results[0, :, :] > 0).astype(np.float)[..., np.newaxis]
-        cv2.imwrite(str(output_path / 'segmented' / img_name.with_suffix('.png')), segmented_img)
+            for output_folder in 'mask_gray', 'mask_color', 'segmented':
+                (output_path / output_folder / image_path.parent).mkdir(parents=True, exist_ok=True)
 
-        # print('time used for the multi-scale image inference' + ' is :' + str(end_time - start_time))
+            # saving grayscale mask image
+            cv2.imwrite(str(output_path / 'mask_gray' / image_path.with_suffix('.png')), results[0, :, :])
+
+            # saving colored mask image
+            vis_res = decode_labels(results)
+            parsing_im = Image.fromarray(vis_res[0])
+            parsing_im.save(str(output_path / 'mask_color' / image_path.with_suffix('.png')))
+
+            # saving segmented image with masked pixels drawn black
+            segmented_img = np.asarray(images[0][0] * 0.5 + 0.5) * (results[0, :, :] > 0).astype(np.float)[np.newaxis]
+            cv2.imwrite(str(output_path / 'segmented' / image_path.with_suffix('.png')), segmented_img.transpose(1,2,0) * 255)
+        else:
+            background_probability = 1.0 - outputs_final.softmax(1)[:, 0] # `B x H x W`
+            background_probability = (background_probability * 255).round().byte().cpu().numpy()
+
+            (output_path / image_path.parent).mkdir(parents=True, exist_ok=True)
+            cv2.imwrite(str(output_path / image_path.with_suffix('.png')), background_probability[0, :, :])
+
     print('Average inference time:', np.mean(exec_times))
 
 
@@ -207,6 +217,8 @@ if __name__ == '__main__':
         help="A directory where to save the results. Will be created if doesn't exist.")
     parser.add_argument('--tta', default='1,0.75,0.5,1.25,1.5,1.75', type=str,
         help="A list of scales for test-time augmentation.")
+    parser.add_argument('--save_extra_data', action='store_true',
+        help="Save parts' segmentation masks, colored segmentation masks and images with removed background.")
     opts = parser.parse_args()
 
     net = deeplab_xception_transfer.deeplab_xception_transfer_projection_savemem(n_classes=20,
@@ -233,10 +245,6 @@ if __name__ == '__main__':
 
     print(f"Found {len(image_paths_list)} images")
     
-    (opts.output_dir / 'mask_color').mkdir(parents=True, exist_ok=True)
-    (opts.output_dir / 'mask_gray').mkdir(parents=True, exist_ok=True)
-    (opts.output_dir / 'segmented').mkdir(parents=True, exist_ok=True)
-
     tta = opts.tta
     try:
         tta = tta.split(',')
@@ -244,4 +252,4 @@ if __name__ == '__main__':
     except:
         raise ValueError(f'tta must be a sequence of comma-separated float values such as "1.0,0.5,1.5". Got "{opts.tta}".')
 
-    inference(net, image_paths_list,  opts.output_dir, use_gpu=True, scale_list=tta)
+    inference(net, image_paths_list,  opts.output_dir, use_gpu=True, scale_list=tta, save_extra_data=opts.save_extra_data)
