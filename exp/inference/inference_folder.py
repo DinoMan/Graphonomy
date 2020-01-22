@@ -129,6 +129,10 @@ def inference(net, img_paths, output_path, scale_list=[1.0, 0.5, 0.75, 1.25, 1.5
         def __getitem__(self, idx):
             image_path = self.img_paths[idx]
             img = read_img(image_path)
+            
+            original_size = torch.tensor(img.size) # to make `default_collate` happy
+            img = img.resize((256, 256))
+
             img_flipped = img_transform(img, tr.HorizontalFlip_only_img())
 
             retval, retval_flipped = [], []
@@ -141,13 +145,51 @@ def inference(net, img_paths, output_path, scale_list=[1.0, 0.5, 0.75, 1.25, 1.5
                 retval.append(img_transform(img, transform))
                 retval_flipped.append(img_transform(img_flipped, transform))
 
-            return retval, retval_flipped, str(image_path) # because `default_collate` doesn't like `Path`
+            # `str()` because `default_collate` doesn't like `Path`
+            return retval, retval_flipped, str(image_path), original_size
 
     dataset = InferenceDataset(img_paths, scale_list)
     dataloader = torch.utils.data.DataLoader(dataset, num_workers=1)
 
+    # Initialize saver processes
+    class ConstrainedTaskPool:
+        def __init__(self, num_processes=1, max_tasks=100):
+            import multiprocessing
+
+            self.num_processes = num_processes
+            self.task_queue = multiprocessing.Queue(maxsize=max_tasks)
+
+            def worker_function(task_queue):
+                for function, args in iter(task_queue.get, 'STOP'):
+                    function(*args)
+
+            for _ in range(self.num_processes):
+                multiprocessing.Process(target=worker_function, args=(self.task_queue,)).start()
+
+        def put_async(self, function, *args):
+            self.task_queue.put((function, args))
+
+        def __del__(self):
+            for _ in range(self.num_processes):
+                self.task_queue.put('STOP')
+
+    background_saver = ConstrainedTaskPool(num_processes=4, max_tasks=3000)
+
+    def save_image_async(image, path):
+        background_saver.put_async(cv2.imwrite, str(path), image)
+
     exec_times = []
-    for images, images_flipped, image_path in tqdm(dataloader):
+    for sample_idx, (images, images_flipped, image_path, original_size) in enumerate(dataloader):
+        # `images`, `images_flipped`: list of length <number-of-scales>,
+        #   each element is a tensor of shape (<batch-size> x 3 x H_k x W_k);
+        # `image_paths`: tuple of length <batch-size> of str
+        # `original_size`: int tensor of shape (<batch-size> x 2)
+        if sample_idx % 100 == 0:
+            import datetime
+            print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}: {sample_idx} / {len(dataloader)}")
+
+        original_size = tuple(original_size[0].tolist())
+
         image_path = Path(image_path[0])
 
         start_time = timeit.default_timer()
@@ -185,22 +227,25 @@ def inference(net, img_paths, output_path, scale_list=[1.0, 0.5, 0.75, 1.25, 1.5
                 (output_path / output_folder / image_path.parent).mkdir(parents=True, exist_ok=True)
 
             # saving grayscale mask image
-            cv2.imwrite(str(output_path / 'mask_gray' / image_path.with_suffix('.png')), results[0, :, :])
+            save_image_async(results[0, :, :], output_path / 'mask_gray' / image_path.with_suffix('.png'))
 
             # saving colored mask image
             vis_res = decode_labels(results)
-            parsing_im = Image.fromarray(vis_res[0])
-            parsing_im.save(str(output_path / 'mask_color' / image_path.with_suffix('.png')))
+            save_image_async(vis_res[0], output_path / 'mask_color' / image_path.with_suffix('.png'))
 
             # saving segmented image with masked pixels drawn black
             segmented_img = np.asarray(images[0][0] * 0.5 + 0.5) * (results[0, :, :] > 0).astype(np.float)[np.newaxis]
-            cv2.imwrite(str(output_path / 'segmented' / image_path.with_suffix('.png')), segmented_img.transpose(1,2,0) * 255)
+            save_image_async(
+                segmented_img.transpose(1,2,0) * 255,
+                output_path / 'segmented' / image_path.with_suffix('.png'))
         else:
             background_probability = 1.0 - outputs_final.softmax(1)[:, 0] # `B x H x W`
             background_probability = (background_probability * 255).round().byte().cpu().numpy()
 
             (output_path / image_path.parent).mkdir(parents=True, exist_ok=True)
-            cv2.imwrite(str(output_path / image_path.with_suffix('.png')), background_probability[0, :, :])
+            save_image_async(
+                cv2.resize(background_probability[0, :, :], original_size),
+                output_path / image_path.with_suffix('.png'))
 
     print('Average inference time:', np.mean(exec_times))
 
@@ -236,10 +281,18 @@ if __name__ == '__main__':
             image_paths_list = sorted(Path(line.strip()) for line in f)
     elif opts.images_path.is_dir():
         print(f"`--images_path` is a directory, recursively looking for images in it...")
-        image_paths_list = sorted(
-            x for x in opts.images_path.rglob("*") \
-            if x.is_file() and x.suffix.lower() in ('.png', '.jpg', '.jpeg')
-        )
+        
+        def list_files_recursively(path, allowed_extensions):
+            retval = []
+            for child in path.iterdir():
+                if child.is_dir():
+                    retval += list_files_recursively(child, allowed_extensions)
+                elif child.suffix.lower() in allowed_extensions:
+                    retval.append(child)
+
+            return retval
+
+        image_paths_list = sorted(list_files_recursively(opts.images_path, ('.png', '.jpg', '.jpeg')))
     else:
         raise FileNotFoundError(f"`--images_path` ('{opts.images_path}')")
 
