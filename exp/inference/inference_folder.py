@@ -228,7 +228,7 @@ if __name__ == '__main__':
                 return retval, retval_flipped, str(image_path), original_size
 
         dataset = InferenceDataset(image_paths_list, scale_list)
-        dataloader = torch.utils.data.DataLoader(dataset, batch_size=14, num_workers=2)
+        dataloader = torch.utils.data.DataLoader(dataset, batch_size=8, num_workers=2)
 
         exec_times = []
         for sample_idx, (images, images_flipped, image_paths, original_sizes) in enumerate(dataloader):
