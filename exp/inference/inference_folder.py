@@ -160,6 +160,11 @@ if __name__ == '__main__':
             print(f"`--images_path` is a file, reading it for a list of files...")
             with open(opts.images_path, 'r') as f:
                 image_paths_list = sorted(Path(line.strip()) for line in f)
+
+            if len(image_paths_list) == 1:
+                common_prefix = image_paths_list[0].parent
+            else:
+                common_prefix = os.path.commonpath(image_paths_list)
         elif opts.images_path.is_dir():
             print(f"`--images_path` is a directory, recursively looking for images in it...")
             
@@ -174,10 +179,16 @@ if __name__ == '__main__':
                 return retval
 
             image_paths_list = sorted(list_files_recursively(opts.images_path, ('.png', '.jpg', '.jpeg')))
+
+            common_prefix = opts.images_path
         else:
             raise FileNotFoundError(f"`--images_path` ('{opts.images_path}')")
 
         print(f"Found {len(image_paths_list)} images")
+        print(f"Will output files in {opts.output_dir} with names relative to {common_prefix}.")
+        print(f"Example:")
+        print(f"The segmentation for: {image_paths_list[0]}")
+        print(f"Will be put in: {opts.output_dir / image_paths_list[0].relative_to(common_prefix).parent}")
         
         tta = opts.tta
         try:
@@ -193,9 +204,6 @@ if __name__ == '__main__':
         except ValueError:
             pass
         scale_list.insert(0, 1.0)
-
-        # Compute the longest common prefix to determine output paths
-        common_prefix = os.path.commonpath(image_paths_list)
 
         class InferenceDataset(torch.utils.data.Dataset):
             def __init__(self, img_paths, scale_list):
@@ -294,8 +302,8 @@ if __name__ == '__main__':
                 for background_probability_single_sample, image_path, original_size \
                     in zip(background_probability, image_paths, original_sizes):
 
+                    output_image_path = opts.output_dir / image_path.with_suffix('.png')
                     save_image_async(
-                        cv2.resize(background_probability_single_sample, original_size),
-                        opts.output_dir / image_path.with_suffix('.png'))
+                        cv2.resize(background_probability_single_sample, original_size), output_image_path)
 
     print('Average inference time:', np.mean(exec_times))
