@@ -99,6 +99,8 @@ if __name__ == '__main__':
              "directory (will be searched recursively for png/jpg/jpeg files).")
     parser.add_argument('--output_dir', required=True, type=Path,
         help="A directory where to save the results. Will be created if doesn't exist.")
+    parser.add_argument('--common_prefix', type=Path,
+        help="Common prefix relative to which save the output files.")
     parser.add_argument('--tta', default='1,0.75,0.5,1.25,1.5,1.75', type=str,
         help="A list of scales for test-time augmentation.")
     parser.add_argument('--save_extra_data', action='store_true',
@@ -157,16 +159,19 @@ if __name__ == '__main__':
         image_paths_list: List[Path]
         
         if opts.images_path.is_file():
-            print(f"`--images_path` is a file, reading it for a list of files...")
+            print(f"`--images_path` ({opts.images_path}) is a file, reading it for a list of files...")
             with open(opts.images_path, 'r') as f:
                 image_paths_list = sorted(Path(line.strip()) for line in f)
 
-            if len(image_paths_list) == 1:
-                common_prefix = image_paths_list[0].parent
-            else:
+            if opts.common_prefix is None:
                 common_prefix = os.path.commonpath(image_paths_list)
+            else:
+                common_prefix= opts.common_prefix
+                for path in image_paths_list:
+                    # TODO optimize by using commonpath
+                    assert common_prefix in path.parents
         elif opts.images_path.is_dir():
-            print(f"`--images_path` is a directory, recursively looking for images in it...")
+            print(f"`--images_path` ({opts.images_path}) is a directory, recursively looking for images in it...")
             
             def list_files_recursively(path, allowed_extensions):
                 retval = []
