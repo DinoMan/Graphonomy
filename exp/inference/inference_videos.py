@@ -26,7 +26,7 @@ import cv2
 cv2.setNumThreads(0)
 from tqdm import tqdm
 import decord
-from math import ceil
+from math import ceil, floor
 import dtk.transforms as dtf
 import dtk.nn as dnn
 import progressbar
@@ -105,6 +105,7 @@ if __name__ == '__main__':
         help="Save parts' segmentation masks, colored segmentation masks and images with removed background.")
     parser.add_argument('--max_frames', type=int, help="The max frames to process")
     parser.add_argument('--split_len', type=int, default=20, help="The max length of a video that fits onto the GPU")
+    parser.add_argument('--multiprocess', nargs='+', type=int, default=(1,1))
     opts = parser.parse_args()
 
     net = deeplab_xception_transfer.deeplab_xception_transfer_projection_savemem(n_classes=20,
@@ -155,6 +156,14 @@ if __name__ == '__main__':
     else:
         raise FileNotFoundError(f"`--video_path` ('{opts.video_path}')")
 
+    print(f"total files {len(video_paths_list)}")
+    part_start = int(floor(((opts.multiprocess[0]-1)/ opts.multiprocess[1])*len(video_paths_list)))
+    part_end = int(ceil((opts.multiprocess[0]/ opts.multiprocess[1])*len(video_paths_list)))
+    print(f"processing part {opts.multiprocess[0]} of {opts.multiprocess[1]}")
+    print(f"part start{part_start} part end {part_end}")
+
+
+    video_paths_list = video_paths_list[part_start:part_end]
     print(f"Found {len(video_paths_list)} images")
     print(f"Will output files in {opts.output_dir}")
     print(f"Example:")
