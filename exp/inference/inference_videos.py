@@ -226,11 +226,6 @@ if __name__ == '__main__':
             inp_video_flipped = videos_flipped[0, current_frame:(current_frame + opts.split_len)]
             snippet_len = inp_video.size(0)
 
-            if sample_idx % 10 == 0:
-                import datetime
-                print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}: {sample_idx} / {len(dataloader)}")
-
-
             inputs = torch.cat((inp_video, inp_video_flipped)).cuda()
             outputs = net.forward(inputs, adj1_test.cuda(), adj3_test.cuda(), adj2_test.cuda()).squeeze()
             outputs_final = (outputs[:snippet_len] + torch.flip(flip_cihp(outputs[snippet_len:]), dims=[-1,])) / 2
