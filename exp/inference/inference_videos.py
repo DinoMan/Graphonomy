@@ -104,6 +104,7 @@ if __name__ == '__main__':
     parser.add_argument('--save_extra_data', action='store_true',
         help="Save parts' segmentation masks, colored segmentation masks and images with removed background.")
     parser.add_argument('--max_frames', type=int, help="The max frames to process")
+    parser.add_argument('--split_len', type=int, default=20, help="The max length of a video that fits onto the GPU")
     opts = parser.parse_args()
 
     net = deeplab_xception_transfer.deeplab_xception_transfer_projection_savemem(n_classes=20,
@@ -198,7 +199,7 @@ if __name__ == '__main__':
                 in_video_path = video_path                
             vr = decord.VideoReader(str(in_video_path), height=256, width=256)
             permute = [2, 1, 0]
-            max_frames=len(vr) if self.max_frames is None else self.max_frames
+            max_frames=len(vr) if self.max_frames is None else min(self.max_frames,len(vr))
 
             video = self.tf(vr.get_batch(range(0, max_frames)))[:, permute]
             
@@ -214,26 +215,29 @@ if __name__ == '__main__':
 
     bar = progressbar.ProgressBar(max_value=len(dataset))
     for sample_idx, (videos, videos_flipped, video_paths, original_sizes) in enumerate(dataloader):
-        videos = videos.cuda()
-        videos_flipped = videos_flipped.cuda()
-
-        if sample_idx % 10 == 0:
-            import datetime
-            print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}: {sample_idx} / {len(dataloader)}")
-
+        
+        video_length = videos.size(1)
+        current_frame = 0
+        mask = np.zeros((video_length, 256, 256))
         original_sizes = [tuple(original_size.tolist()) for original_size in original_sizes]
 
-        video_length = videos.size(1)
+        while current_frame < video_length:
+            inp_video = videos[0, current_frame:(current_frame + opts.split_len)]
+            inp_video_flipped = videos_flipped[0, current_frame:(current_frame + opts.split_len)]
+            snippet_len = inp_video.size(0)
 
-        start_time = timeit.default_timer()
+            if sample_idx % 10 == 0:
+                import datetime
+                print(f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}: {sample_idx} / {len(dataloader)}")
 
-        for iii, video in enumerate(videos):
-            inputs = torch.cat((video, videos_flipped[iii]))
+
+            inputs = torch.cat((inp_video, inp_video_flipped)).cuda()
             outputs = net.forward(inputs, adj1_test.cuda(), adj3_test.cuda(), adj2_test.cuda()).squeeze()
-            outputs_final = outputs[:video_length]#(outputs[:video_length] + torch.flip(flip_cihp(outputs[video_length:]), dims=[-1,])) / 2
+            outputs_final = (outputs[:snippet_len] + torch.flip(flip_cihp(outputs[snippet_len:]), dims=[-1,])) / 2
 
-        background_probability = 1.0 - outputs_final.softmax(1)[:, 0] # `B x H x W`
-        background_probability = (background_probability * 255).round().byte().cpu().numpy()
+            background_probability = 1.0 - outputs_final.softmax(1)[:, 0] # `B x H x W`
+            mask[current_frame:(current_frame + snippet_len)] = (background_probability * 255).round().byte().cpu().numpy()
+            current_frame += snippet_len
         
         output_video_path = opts.output_dir / video_paths[0]
 
@@ -241,7 +245,7 @@ if __name__ == '__main__':
         if not os.path.exists(directory):
             os.makedirs(directory)
         writer = cv2.VideoWriter(str(output_video_path), cv2.VideoWriter_fourcc(*'mp4v'), float(dataset.fps), original_sizes[0], isColor=0)
-        for i, frame in enumerate(background_probability):
+        for i, frame in enumerate(mask):
             write_frame = cv2.resize(frame.astype('uint8'), original_sizes[0])
             writer.write(write_frame)
     
